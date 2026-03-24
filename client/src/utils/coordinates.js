@@ -1,0 +1,17 @@
+export const LOCATIONS_COORDINATES = {
+  'Hyderabad': [17.3850, 78.4867],
+  'Secunderabad': [17.4399, 78.4983],
+  'Gachibowli': [17.4401, 78.3489],
+  'Hitech City': [17.4435, 78.3772],
+  'Madhapur': [17.4486, 78.3908],
+  'Kukatpally': [17.4849, 78.3995],
+  'Ameerpet': [17.4375, 78.4482],
+  'Begumpet': [17.4447, 78.4664],
+  'Banjara Hills': [17.4156, 78.4347],
+  'Jubilee Hills': [17.4312, 78.4069],
+  'Miyapur': [17.4968, 78.3614],
+  'LB Nagar': [17.3503, 78.5452],
+  'Dilsukhnagar': [17.3688, 78.5247],
+  'Charminar': [17.3616, 78.4747],
+  'Mehdipatnam': [17.3916, 78.4318],
+};
