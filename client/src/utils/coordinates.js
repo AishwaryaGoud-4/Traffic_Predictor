@@ -15,3 +15,16 @@ export const LOCATIONS_COORDINATES = {
   'Charminar': [17.3616, 78.4747],
   'Mehdipatnam': [17.3916, 78.4318],
 };
+
+export const geocodeCity = async (cityName) => {
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cityName)}`);
+    const data = await res.json();
+    if (data && data.length > 0) {
+      return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+    }
+  } catch (err) {
+    console.error("Geocoding failed for:", cityName, err);
+  }
+  return null;
+};

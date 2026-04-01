@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import api from '../utils/api';
 import AutocompleteInput from '../components/AutocompleteInput';
-import { LOCATIONS_COORDINATES } from '../utils/coordinates';
+import { LOCATIONS_COORDINATES, geocodeCity } from '../utils/coordinates';
 
 // Fix for default marker icons in react-leaflet
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -77,6 +77,7 @@ export default function Home() {
   });
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [geoLoading, setGeoLoading] = useState(false);
   const [error, setError] = useState('');
   
   // MAP STATE
@@ -84,9 +85,10 @@ export default function Home() {
   const [optimizedRouteId, setOptimizedRouteId] = useState(null);
   const [maxTraffic, setMaxTraffic] = useState(0);
   
-  // NEW: Hover interaction and other location markers
+  // NEW: Hover interaction, other location markers, and dynamic coordinates
   const [hoveredRouteId, setHoveredRouteId] = useState(null);
   const [otherLocationsTraffic, setOtherLocationsTraffic] = useState([]);
+  const [dynamicCoords, setDynamicCoords] = useState({});
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -96,26 +98,47 @@ export default function Home() {
     setFormData({ ...formData, [name]: value });
   };
 
-  const generateOtherLocationsTraffic = (source, destination) => {
-    // Pick up to 5 random locations that are NOT the source or destination
-    const availableLocs = LOCATIONS.filter(l => l !== source && l !== destination);
-    // Shuffle and pick
-    const randomLocations = availableLocs.sort(() => 0.5 - Math.random()).slice(0, 5);
-    
-    return randomLocations.map(name => {
-      // Generate some simulated traffic numbers
-      const totalVehicles = Math.floor(Math.random() * 200) + 20; // 20 to 220
-      let level = 'Low';
-      if (totalVehicles > 120) level = 'High';
-      else if (totalVehicles >= 50) level = 'Medium';
+  const fetchRealOtherLocationsTraffic = async (source, destination) => {
+    try {
+      const res = await api.get('/traffic/all');
+      const recentTraffic = res.data;
       
-      return {
-        name,
-        totalVehicles,
-        level,
-        coords: LOCATIONS_COORDINATES[name]
-      };
-    });
+      const otherLocsMap = {};
+      recentTraffic.forEach(t => {
+        const locName = t.source;
+        if (
+           locName && 
+           locName.toLowerCase() !== source.toLowerCase() && 
+           locName.toLowerCase() !== destination.toLowerCase() && 
+           !otherLocsMap[locName]
+        ) {
+           otherLocsMap[locName] = {
+             name: locName,
+             totalVehicles: t.totalVehicles,
+             level: t.trafficLevel,
+             time: t.time || 'Unknown',
+             coords: LOCATIONS_COORDINATES[locName] || null
+           };
+        }
+      });
+      
+      let uniqueLocs = Object.values(otherLocsMap);
+      let others = [];
+      for (const loc of uniqueLocs) {
+        if (!loc.coords) {
+          const c = await geocodeCity(loc.name);
+          if (c) loc.coords = c;
+        }
+        if (loc.coords) {
+          others.push(loc);
+        }
+        if (others.length >= 5) break; 
+      }
+      return others;
+    } catch (err) {
+      console.error('Failed to fetch real traffic from other users', err);
+      return [];
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -127,8 +150,29 @@ export default function Home() {
     setMaxTraffic(0);
     setOtherLocationsTraffic([]);
     setLoading(true);
+    setGeoLoading(true);
 
     try {
+      // 0. Resolve Geocoding dynamically if user typed an external city
+      let sCoords = LOCATIONS_COORDINATES[formData.source] || dynamicCoords[formData.source];
+      let dCoords = LOCATIONS_COORDINATES[formData.destination] || dynamicCoords[formData.destination];
+
+      if (!sCoords) {
+        sCoords = await geocodeCity(formData.source);
+        if (sCoords) setDynamicCoords(prev => ({...prev, [formData.source]: sCoords}));
+      }
+      if (!dCoords) {
+        dCoords = await geocodeCity(formData.destination);
+        if (dCoords) setDynamicCoords(prev => ({...prev, [formData.destination]: dCoords}));
+      }
+      setGeoLoading(false);
+
+      if (!sCoords || !dCoords) {
+        setError("We couldn't locate one of your inputs. Please check the spelling of your Source or Destination.");
+        setLoading(false);
+        return;
+      }
+
       const payload = {
         ...formData,
         cars: Number(formData.cars) || 0,
@@ -141,10 +185,10 @@ export default function Home() {
       const res = await api.post('/traffic/predict', payload);
       setResult(res.data);
 
-      if (LOCATIONS_COORDINATES[formData.source] && LOCATIONS_COORDINATES[formData.destination]) {
+      if (sCoords && dCoords) {
         // 1. Fetch alternative routes from OSRM
-        const [lat1, lon1] = LOCATIONS_COORDINATES[formData.source];
-        const [lat2, lon2] = LOCATIONS_COORDINATES[formData.destination];
+        const [lat1, lon1] = sCoords;
+        const [lat2, lon2] = dCoords;
         
         try {
           const osrmRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson&alternatives=3`);
@@ -224,8 +268,8 @@ export default function Home() {
           console.error("OSRM fetch failed", err);
         }
 
-        // 2. Generate random traffic data for other locations
-        const others = generateOtherLocationsTraffic(formData.source, formData.destination);
+        // 2. Fetch real traffic data for other locations
+        const others = await fetchRealOtherLocationsTraffic(formData.source, formData.destination);
         setOtherLocationsTraffic(others);
       }
 
@@ -233,6 +277,7 @@ export default function Home() {
       setError(err.response?.data?.message || 'Prediction failed. Please try again.');
     } finally {
       setLoading(false);
+      setGeoLoading(false);
     }
   };
 
@@ -245,8 +290,8 @@ export default function Home() {
     }
   };
 
-  const sourceCoords = LOCATIONS_COORDINATES[formData.source];
-  const destCoords = LOCATIONS_COORDINATES[formData.destination];
+  const displaySourceCoords = LOCATIONS_COORDINATES[formData.source] || dynamicCoords[formData.source];
+  const displayDestCoords = LOCATIONS_COORDINATES[formData.destination] || dynamicCoords[formData.destination];
 
   // We reorder the routes array so that the selected/optimized route is rendered last (on top) 
   const displayRoutes = [...routes].sort((a, b) => {
@@ -282,7 +327,7 @@ export default function Home() {
                   value={formData.source}
                   onChange={handleAutocomplete}
                   options={LOCATIONS}
-                  placeholder="Type source location..."
+                  placeholder="Type any city or location..."
                   required
                   excludeValue={formData.destination}
                 />
@@ -295,7 +340,7 @@ export default function Home() {
                   value={formData.destination}
                   onChange={handleAutocomplete}
                   options={LOCATIONS}
-                  placeholder="Type destination location..."
+                  placeholder="Type any city or location..."
                   required
                   excludeValue={formData.source}
                 />
@@ -304,13 +349,13 @@ export default function Home() {
 
             {/* Map Container */}
             <div className="map-container" style={{ height: '450px', borderRadius: '12px', overflow: 'hidden', marginBottom: '20px', zIndex: 0, position: 'relative' }}>
-              {(!sourceCoords || !destCoords) ? (
+              {(!displaySourceCoords || !displayDestCoords) ? (
                 <div style={{ padding: '20px', textAlign: 'center', background: 'rgba(255,255,255,0.05)', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <p>Select a valid Source and Destination to view the interactive map.</p>
+                  <p>Type in a valid Source and Destination anywhere in the world to view the interactive map.</p>
                 </div>
               ) : (
                 <MapContainer 
-                  center={sourceCoords} 
+                  center={displaySourceCoords} 
                   zoom={12} 
                   style={{ height: '100%', width: '100%', zIndex: 1 }}
                 >
@@ -320,10 +365,10 @@ export default function Home() {
                   />
                   
                   {/* Primary Source and Destination Markers */}
-                  <Marker position={sourceCoords}>
+                  <Marker position={displaySourceCoords}>
                     <Popup><strong>Source: {formData.source}</strong></Popup>
                   </Marker>
-                  <Marker position={destCoords}>
+                  <Marker position={displayDestCoords}>
                     <Popup><strong>Destination: {formData.destination}</strong></Popup>
                   </Marker>
 
@@ -333,6 +378,7 @@ export default function Home() {
                       <Tooltip direction="top" offset={[0, -20]} opacity={0.9} permanent className="custom-tooltip">
                         <div style={{ textAlign: 'center', minWidth: '100px', fontSize: '12px', lineHeight: '1.2' }}>
                           <strong style={{ fontSize: '14px' }}>{loc.name}</strong><br/>
+                          <span style={{ fontSize: '11px', color: '#6b7280' }}>Reported: {loc.time}</span><br/>
                           <span style={{
                              color: loc.level === 'High' ? '#dc2626' : loc.level === 'Medium' ? '#d97706' : '#16a34a',
                              fontWeight: 'bold'
@@ -399,7 +445,7 @@ export default function Home() {
                     )
                   })}
                   
-                  <MapBounds routes={routes} sourceCoords={sourceCoords} destCoords={destCoords} otherLocations={otherLocationsTraffic} />
+                  <MapBounds routes={routes} sourceCoords={displaySourceCoords} destCoords={displayDestCoords} otherLocations={otherLocationsTraffic} />
                 </MapContainer>
               )}
             </div>
@@ -444,8 +490,8 @@ export default function Home() {
 
             {error && <div className="alert alert-error">{error}</div>}
 
-            <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
-              {loading ? <span className="spinner-sm"></span> : '🔮 Predict Traffic & Routes'}
+            <button type="submit" className="btn btn-primary btn-full" disabled={loading || geoLoading}>
+              {loading || geoLoading ? <span className="spinner-sm"></span> : '🔮 Predict Traffic & Routes'}
             </button>
           </form>
         </div>

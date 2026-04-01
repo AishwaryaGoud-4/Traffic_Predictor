@@ -214,6 +214,20 @@ router.post('/predict', auth, async (req, res) => {
   }
 });
 
+// GET /api/traffic/all - Get recent traffic reports globally across all users (up to 20)
+router.get('/all', auth, async (req, res) => {
+  try {
+    const records = await Traffic.find({})
+      .sort({ createdAt: -1 })
+      .limit(20);
+
+    res.json(records);
+  } catch (error) {
+    console.error('Global traffic error:', error);
+    res.status(500).json({ message: 'Server error fetching global traffic.' });
+  }
+});
+
 // GET /api/traffic/history
 router.get('/history', auth, async (req, res) => {
   try {
