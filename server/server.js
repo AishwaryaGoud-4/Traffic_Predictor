@@ -32,13 +32,12 @@ mongoose
     }
   });
 
-// Start server if not running in a Serverless Environment
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 5001;
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
-}
+const PORT = process.env.PORT || 5001;
+const HOST = '0.0.0.0'; // Essential for Render to detect the active port
+
+app.listen(PORT, HOST, () => {
+  console.log(`🚀 Server successfully bound to ${HOST} on port ${PORT}`);
+});
 
 // Export for Vercel Serverless Functions
 module.exports = app;
